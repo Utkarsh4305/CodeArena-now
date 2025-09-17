@@ -1,11 +1,16 @@
 {
-  "buildCommand": "cd client && npm install && npm run build",
-  "outputDirectory": "client/build",
-  "installCommand": "echo 'skipping root install'",
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "devCommand": "npm start",
+  "framework": "create-react-app",
+  "env": {
+    "REACT_APP_API_URL": "https://codearena-backend-aoce.onrender.com",
+    "REACT_APP_EVAL_API_URL": "https://codearena-backend-aoce.onrender.com"
+  },
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "source": "/api/(.*)",
+      "destination": "https://codearena-backend-aoce.onrender.com/$1"
     }
   ]
 }

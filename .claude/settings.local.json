@@ -27,7 +27,11 @@
       "WebFetch(domain:code-arena-8zk339hrw-utkarshs-projects-a5d46763.vercel.app)",
       "WebFetch(domain:code-arena-a27l9jmcz-utkarshs-projects-a5d46763.vercel.app)",
       "WebFetch(domain:code-arena-ealxpf5tu-utkarshs-projects-a5d46763.vercel.app)",
-      "WebFetch(domain:code-arena-2xqvj6b4s-utkarshs-projects-a5d46763.vercel.app)"
+      "WebFetch(domain:code-arena-2xqvj6b4s-utkarshs-projects-a5d46763.vercel.app)",
+      "WebFetch(domain:code-arena-f2q7eggwv-utkarshs-projects-a5d46763.vercel.app)",
+      "Bash(npx serve:*)",
+      "Bash(npx vercel:*)",
+      "WebFetch(domain:code-arena-pckugld8a-utkarshs-projects-a5d46763.vercel.app)"
     ],
     "deny": [],
     "ask": []
