@@ -17,24 +17,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CORS configuration for Render deployment
+# CORS configuration for Render deployment - Allow all origins for development
 CORS(app, resources={r"/*": {
-    "origins": [
-        "https://code-arena-f2q7eggwv-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-ealxpf5tu-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-e1hez48mw-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-8zk339hrw-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-a27l9jmcz-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-akred8e70-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-pckugld8a-utkarshs-projects-a5d46763.vercel.app",
-        "https://code-arena-*.vercel.app",
-        "https://*.vercel.app", 
-        "https://codearena.vercel.app",
-        "https://*.railway.app",
-        "https://*.onrender.com",
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ],
+    "origins": "*",
     "expose_headers": ["Content-Type", "Content-Length"],
     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
