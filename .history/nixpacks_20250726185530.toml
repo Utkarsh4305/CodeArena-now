@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "python310", "gcc", "gcc.lib", "zlib", "libffi", "openssl"]
+
+[phases.install]
+cmds = [
+    "cd client && npm install --omit=dev",
+    "pip install -r requirements.txt",
+    "npm cache clean --force"
+]
+cacheDirectories = ["/app/node_modules", "/app/client/node_modules", "/root/.cache/pip"]
+
+[phases.build]
+cmds = [
+    "cd client && NODE_OPTIONS='--max_old_space_size=8192' npm run build"
+]
+
+[start]
+cmd = "gunicorn --bind 0.0.0.0:$PORT --timeout 600 --workers 1 backend.compile:app"

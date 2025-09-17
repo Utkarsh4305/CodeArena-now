@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ["nodejs_18", "python3"]  # React-scripts often needs Python
+
+[phases.install]
+cmds = [
+    "cd client && npm ci --omit=dev",  # Install only production deps
+    "npm cache clean --force"
+]
+cacheDirectories = ["/app/node_modules", "/app/client/node_modules", "/app/.npm"]
+
+[phases.build]
+cmds = [
+    "cd client && NODE_OPTIONS=--max_old_space_size=8192 npm run build",
+    "ls -la client/build"  # Verify build output
+]
+
+[start]
+cmd = "npx serve -s client/build -l $PORT"

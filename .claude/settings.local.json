@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(python:*)",
+      "Bash(npm install:*)",
+      "Bash(vercel:*)",
+      "Bash(FLASK_APP=backend/compile.py python -m flask routes)",
+      "Bash(del requirements.txt)",
+      "WebFetch(domain:code-arena-3r01qe4jo-utkarshs-projects-a5d46763.vercel.app)",
+      "Bash(railway login:*)",
+      "Bash(railway link:*)",
+      "Bash(railway up:*)",
+      "Bash(railway status:*)",
+      "Bash(railway domain:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(curl:*)",
+      "Bash(sh)",
+      "Bash(set CI=false)",
+      "WebFetch(domain:code-arena-e1hez48mw-utkarshs-projects-a5d46763.vercel.app)",
+      "WebFetch(domain:codearena-backend-aoce.onrender.com)",
+      "WebFetch(domain:code-arena-egvn52hae-utkarshs-projects-a5d46763.vercel.app)",
+      "WebFetch(domain:code-arena-8zk339hrw-utkarshs-projects-a5d46763.vercel.app)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

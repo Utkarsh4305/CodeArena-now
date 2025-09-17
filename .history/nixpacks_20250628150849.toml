@@ -1,0 +1,17 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]  # Use Node 20 for better compatibility
+
+[phases.install]
+cmds = [
+    "cd client && npm install --omit=dev",
+    "npm cache clean --force"
+]
+cacheDirectories = ["/app/node_modules", "/app/client/node_modules"]
+
+[phases.build]
+cmds = [
+    "cd client && NODE_OPTIONS='--max_old_space_size=8192' npm run build"
+]
+
+[start]
+cmd = "npx serve -s client/build -l $PORT"

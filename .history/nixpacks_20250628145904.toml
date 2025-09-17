@@ -1,0 +1,15 @@
+[phases.setup]
+nixPkgs = ["nodejs_18", "python3"]  # Some builds need Python
+
+[phases.install]
+cmds = ["npm ci"]
+cacheDirectories = ["/app/node_modules", "/app/.npm"]
+
+[phases.build]
+cmds = [
+    "NODE_OPTIONS=--max_old_space_size=8192 npm run build",
+    "ls -la client/build"  # Debug: verify build output
+]
+
+[start]
+cmd = "npx serve -s client/build -l 8080"

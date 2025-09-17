@@ -1,0 +1,13 @@
+base = "client"
+
+[phases.setup]
+nixPkgs = ["nodejs_18"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["NODE_OPTIONS=--max_old_space_size=4096 npm run build"]
+
+[start]
+cmd = "npx serve -s build"

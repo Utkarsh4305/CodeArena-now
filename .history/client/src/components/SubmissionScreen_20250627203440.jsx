@@ -27,6 +27,94 @@ import {
 } from "@mui/material";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/firebaseConfig";
+import { EditorView, basicSetup } from "codemirror";
+import { EditorState, StateEffect } from "@codemirror/state";
+import { python } from "@codemirror/lang-python";
+import { javascript } from "@codemirror/lang-javascript";
+import { java } from "@codemirror/lang-java";
+import { cpp } from "@codemirror/lang-cpp";
+import { bracketMatching } from "@codemirror/language";
+import { keymap } from "@codemirror/view";
+import { autocompletion } from "@codemirror/autocomplete";
+
+// Language configuration for CodeMirror
+const LANGUAGE_EXTENSIONS = {
+  python: python(),
+  javascript: javascript(),
+  java: java(),
+  c: cpp(),
+  cpp: cpp(),
+};
+
+// Custom CodeMirror theme to disable spell-check underlines, enhance bracket highlighting, set white cursor, and add purple scrollbar
+const customTheme = EditorView.theme({
+  "&": {
+    backgroundColor: "#121223",
+    color: "#e0e0e0",
+    fontFamily: "monospace",
+    height: "100%",
+    border: "1px solid rgba(156, 39, 176, 0.5)",
+    borderRadius: "4px",
+  },
+  ".cm-scroller": {
+    overflow: "auto",
+    fontFamily: "monospace",
+    "&::-webkit-scrollbar": {
+      width: "8px",
+    },
+    "&::-webkit-scrollbar-track": {
+      background: "rgba(18, 18, 35, 0.3)",
+    },
+    "&::-webkit-scrollbar-thumb": {
+      background: "rgba(156, 39, 176, 0.5)",
+      borderRadius: "4px",
+    },
+    "&::-webkit-scrollbar-thumb:hover": {
+      background: "rgba(156, 39, 176, 0.7)",
+    },
+  },
+  ".cm-content": {
+    caretColor: "#ffffff !important",
+    spellCheck: "false",
+    "-webkit-user-select": "text",
+    userSelect: "text",
+  },
+  ".cm-cursor": {
+    borderLeftColor: "#ffffff !important",
+  },
+  ".cm-gutters": {
+    backgroundColor: "#1a1a2e",
+    color: "#888",
+    borderRight: "1px solid rgba(156, 39, 176, 0.3)",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "rgba(156, 39, 176, 0.1)",
+  },
+  ".cm-matchingBracket": {
+    backgroundColor: "rgba(156, 39, 176, 0.3)",
+    color: "#bb5fce",
+    fontWeight: "bold",
+    border: "1px solid #bb5fce",
+    borderRadius: "2px",
+  },
+  ".cm-nonmatchingBracket": {
+    backgroundColor: "rgba(244, 67, 54, 0.3)",
+    color: "#F44336",
+  },
+});
+
+// Disable browser spell-check and grammar underlines
+const disableSpellCheck = EditorView.contentAttributes.of({
+  spellcheck: "false",
+  autocorrect: "off",
+  autocapitalize: "off",
+});
+
+// Explicitly disable autocompletion
+const noAutocompletion = autocompletion({ activateOnTyping: false, defaultKeymap: false });
+
+// Filter out autocompletion from basicSetup
+const filteredBasicSetup = basicSetup.filter((ext) => ext !== autocompletion());
 
 const SUPPORTED_LANGUAGES = {
   python: {
@@ -59,6 +147,10 @@ const SUPPORTED_LANGUAGES = {
 const SubmissionScreen = () => {
   const { workspaceId, assignmentId } = useParams();
   const navigate = useNavigate();
+
+  // Generate unique prefix for localStorage keys
+  const storagePrefix = `assignment_${workspaceId}_${assignmentId}`;
+
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [userHasSubmitted, setUserHasSubmitted] = useState(false);
@@ -75,20 +167,78 @@ const SubmissionScreen = () => {
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [showPermissionsDialog, setShowPermissionsDialog] = useState(false);
   const [showEscapeWarningDialog, setShowEscapeWarningDialog] = useState(false);
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [fullScreenExitTimer, setFullScreenExitTimer] = useState(null);
   const [fullScreenExitTimeRemaining, setFullScreenExitTimeRemaining] = useState(15);
   const [closingTime, setClosingTime] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(null);
-  const escKeyPressCountRef = useRef(parseInt(localStorage.getItem("escKeyPressCount")) || 0);
-  const violationCountRef = useRef(parseInt(localStorage.getItem("violationCount")) || 0);
-  const fullScreenExitCountRef = useRef(0);
-  const lastViolationTimeRef = useRef(0);
+
+  // Initialize violation counts from localStorage with assignment-specific keys
+  const escKeyPressCountRef = useRef(
+    parseInt(localStorage.getItem(`${storagePrefix}_escKeyPressCount`)) || 0
+  );
+  const violationCountRef = useRef(
+    parseInt(localStorage.getItem(`${storagePrefix}_violationCount`)) || 0
+  );
+  const swipeViolationCountRef = useRef(
+    parseInt(localStorage.getItem(`${storagePrefix}_swipeViolationCount`)) || 0
+  );
+  const fullScreenExitCountRef = useRef(
+    parseInt(localStorage.getItem(`${storagePrefix}_fullScreenExitCount`)) || 0
+  );
+  const lastViolationTimeRef = useRef(
+    parseInt(localStorage.getItem(`${storagePrefix}_lastViolationTime`)) || 0
+  );
+  const touchStartXRef = useRef(null);
+  const originalUrlRef = useRef(window.location.href);
+  const isMonitoringUrlRef = useRef(false);
   const username = localStorage.getItem("username") || "";
   const isTeacher = username === "teacher";
-  const textFieldRefs = useRef({});
+  const editorRefs = useRef({});
+
+  // Save violation counts to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${storagePrefix}_escKeyPressCount`, escKeyPressCountRef.current);
+    } catch (e) {
+      console.error("Failed to save escKeyPressCount to localStorage:", e);
+    }
+  }, [escKeyPressCountRef.current]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${storagePrefix}_violationCount`, violationCountRef.current);
+    } catch (e) {
+      console.error("Failed to save violationCount to localStorage:", e);
+    }
+  }, [violationCountRef.current]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${storagePrefix}_swipeViolationCount`, swipeViolationCountRef.current);
+    } catch (e) {
+      console.error("Failed to save swipeViolationCount to localStorage:", e);
+    }
+  }, [swipeViolationCountRef.current]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${storagePrefix}_fullScreenExitCount`, fullScreenExitCountRef.current);
+    } catch (e) {
+      console.error("Failed to save fullScreenExitCount to localStorage:", e);
+    }
+  }, [fullScreenExitCountRef.current]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${storagePrefix}_lastViolationTime`, lastViolationTimeRef.current);
+    } catch (e) {
+      console.error("Failed to save lastViolationTime to localStorage:", e);
+    }
+  }, [lastViolationTimeRef.current]);
 
   const shouldRequestFullscreen = () => {
-    return !userHasSubmitted && !isTeacher;
+    return !userHasSubmitted && !isTeacher && !isAutoSubmitting;
   };
 
   useEffect(() => {
@@ -159,6 +309,7 @@ const SubmissionScreen = () => {
       const currentTime = new Date().getTime();
       if (currentTime >= closingTime) {
         clearInterval(interval);
+        setIsAutoSubmitting(true);
         submitAnswers();
         alert("Assignment has been auto-submitted due to reaching the closing time.");
       } else {
@@ -169,14 +320,16 @@ const SubmissionScreen = () => {
     return () => clearInterval(interval);
   }, [closingTime, userHasSubmitted, isTeacher]);
 
+  // Window blur event handler
   useEffect(() => {
     if (!shouldRequestFullscreen()) return;
 
     const handleBlur = () => {
       const now = Date.now();
       lastViolationTimeRef.current = now;
+      localStorage.setItem(`${storagePrefix}_lastViolationTime`, now);
       violationCountRef.current += 1;
-      localStorage.setItem("violationCount", violationCountRef.current);
+      localStorage.setItem(`${storagePrefix}_violationCount`, violationCountRef.current);
 
       logSecurityEvent("window_focus_lost", {
         count: violationCountRef.current,
@@ -193,6 +346,7 @@ const SubmissionScreen = () => {
             if (prev <= 1) {
               clearInterval(timer);
               if (!document.fullscreenElement && shouldRequestFullscreen()) {
+                setIsAutoSubmitting(true);
                 handleAutomaticSubmission();
               }
               return 0;
@@ -243,14 +397,21 @@ const SubmissionScreen = () => {
     console.log(`Security Event: ${eventType}`, details);
   };
 
-  const handleAutomaticSubmission = () => {
-    submitAnswers();
+  const handleAutomaticSubmission = async () => {
+    setIsAutoSubmitting(true);
+    window.onbeforeunload = null;
+
+    await submitAnswers();
     alert("Your test has been automatically submitted due to security violation.");
-    localStorage.removeItem("escKeyPressCount");
-    localStorage.removeItem("violationCount");
-    escKeyPressCountRef.current = 0;
-    violationCountRef.current = 0;
-    navigate(`/workspace/${workspaceId}`);
+
+    // Clear assignment-specific violation counts from localStorage
+    localStorage.removeItem(`${storagePrefix}_escKeyPressCount`);
+    localStorage.removeItem(`${storagePrefix}_violationCount`);
+    localStorage.removeItem(`${storagePrefix}_swipeViolationCount`);
+    localStorage.removeItem(`${storagePrefix}_fullScreenExitCount`);
+    localStorage.removeItem(`${storagePrefix}_lastViolationTime`);
+
+    window.location.replace(`/workspace/${workspaceId}`);
   };
 
   const handleEscapeKeyPress = (e) => {
@@ -259,7 +420,7 @@ const SubmissionScreen = () => {
       e.stopPropagation();
 
       escKeyPressCountRef.current += 1;
-      localStorage.setItem("escKeyPressCount", escKeyPressCountRef.current);
+      localStorage.setItem(`${storagePrefix}_escKeyPressCount`, escKeyPressCountRef.current);
 
       logSecurityEvent("escape_key_pressed", {
         count: escKeyPressCountRef.current,
@@ -271,17 +432,66 @@ const SubmissionScreen = () => {
         setShowEscapeWarningDialog(true);
       } else if (escKeyPressCountRef.current >= 2) {
         setShowEscapeWarningDialog(false);
+        setIsAutoSubmitting(true);
         handleAutomaticSubmission();
       }
     }
   };
 
-  const handleWindowSwitchAttempt = (keyCombo) => {
-    if (Date.now() - lastViolationTimeRef.current < 500) return;
+  const handleSwipeNavigationAttempt = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
-    lastViolationTimeRef.current = Date.now();
+    swipeViolationCountRef.current += 1;
+    localStorage.setItem(`${storagePrefix}_swipeViolationCount`, swipeViolationCountRef.current);
+
+    logSecurityEvent("navigation_attempt", {
+      type: e.type === "wheel" ? "scroll" : "swipe",
+      count: swipeViolationCountRef.current,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (swipeViolationCountRef.current === 1) {
+      exitFullScreen();
+      setShowEscapeWarningDialog(true);
+
+      setFullScreenExitTimeRemaining(15);
+      const timer = setInterval(() => {
+        setFullScreenExitTimeRemaining((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            if (!document.fullscreenElement && shouldRequestFullscreen()) {
+              setIsAutoSubmitting(true);
+              handleAutomaticSubmission();
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      setFullScreenExitTimer(timer);
+    } else if (swipeViolationCountRef.current >= 2) {
+      setShowEscapeWarningDialog(false);
+      if (fullScreenExitTimer) {
+        clearInterval(fullScreenExitTimer);
+        setFullScreenExitTimer(null);
+      }
+      setIsAutoSubmitting(true);
+      handleAutomaticSubmission();
+    }
+  };
+
+  const handleWindowSwitchAttempt = (keyCombo) => {
+    const now = Date.now();
+    if (now - lastViolationTimeRef.current < 500) return;
+
+    lastViolationTimeRef.current = now;
+    localStorage.setItem(`${storagePrefix}_lastViolationTime`, now);
     violationCountRef.current += 1;
-    localStorage.setItem("violationCount", violationCountRef.current);
+    localStorage.setItem(`${storagePrefix}_violationCount`, violationCountRef.current);
 
     logSecurityEvent("window_switch_attempt", {
       keyCombo: keyCombo,
@@ -299,6 +509,7 @@ const SubmissionScreen = () => {
           if (prev <= 1) {
             clearInterval(timer);
             if (!document.fullscreenElement && shouldRequestFullscreen()) {
+              setIsAutoSubmitting(true);
               handleAutomaticSubmission();
             }
             return 0;
@@ -310,23 +521,146 @@ const SubmissionScreen = () => {
       setFullScreenExitTimer(timer);
     } else if (violationCountRef.current >= 2) {
       setShowEscapeWarningDialog(false);
+      setIsAutoSubmitting(true);
       handleAutomaticSubmission();
     }
   };
 
   const handleFullScreenExit = () => {
     fullScreenExitCountRef.current += 1;
+    localStorage.setItem(`${storagePrefix}_fullScreenExitCount`, fullScreenExitCountRef.current);
+
     logSecurityEvent("fullscreen_exit_attempt", {
       count: fullScreenExitCountRef.current,
       timestamp: new Date().toISOString(),
     });
 
     if (fullScreenExitCountRef.current >= 2) {
+      setIsAutoSubmitting(true);
       handleAutomaticSubmission();
     } else {
       setShowEscapeWarningDialog(true);
     }
   };
+
+  // Navigation restrictions and URL manipulation prevention
+  useEffect(() => {
+    if (!shouldRequestFullscreen()) {
+      window.onbeforeunload = null;
+      return;
+    }
+
+    const lockHistory = () => {
+      window.history.pushState({ locked: true }, "", originalUrlRef.current);
+    };
+    lockHistory();
+
+    const originalWindowOpen = window.open;
+    window.open = function (url, name, specs) {
+      logSecurityEvent("window_open_attempt", {
+        url,
+        name,
+        specs,
+        timestamp: new Date().toISOString(),
+      });
+      if (shouldRequestFullscreen()) {
+        setIsAutoSubmitting(true);
+        handleAutomaticSubmission();
+        return null;
+      }
+      return originalWindowOpen(url, name, specs);
+    };
+
+    let rafId;
+    const monitorUrl = () => {
+      if (!shouldRequestFullscreen() || isAutoSubmitting) {
+        cancelAnimationFrame(rafId);
+        isMonitoringUrlRef.current = false;
+        return;
+      }
+      const currentUrl = window.location.href;
+      if (currentUrl !== originalUrlRef.current) {
+        logSecurityEvent("url_change_detected", {
+          attemptedUrl: currentUrl,
+          originalUrl: originalUrlRef.current,
+          timestamp: new Date().toISOString(),
+        });
+        setIsAutoSubmitting(true);
+        handleAutomaticSubmission();
+        cancelAnimationFrame(rafId);
+        isMonitoringUrlRef.current = false;
+        return;
+      }
+      lockHistory();
+      rafId = requestAnimationFrame(monitorUrl);
+    };
+
+    if (!isMonitoringUrlRef.current) {
+      isMonitoringUrlRef.current = true;
+      rafId = requestAnimationFrame(monitorUrl);
+    }
+
+    const handlePopState = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      logSecurityEvent("history_navigation_attempt", {
+        timestamp: new Date().toISOString(),
+        state: e.state,
+      });
+      if (shouldRequestFullscreen()) {
+        setIsAutoSubmitting(true);
+        handleAutomaticSubmission();
+      } else {
+        lockHistory();
+      }
+    };
+
+    const handleHashChange = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      logSecurityEvent("hash_change_attempt", {
+        newHash: window.location.hash,
+        timestamp: new Date().toISOString(),
+      });
+      if (shouldRequestFullscreen()) {
+        setIsAutoSubmitting(true);
+        handleAutomaticSubmission();
+      } else {
+        lockHistory();
+      }
+    };
+
+    const handleBeforeUnload = (e) => {
+      logSecurityEvent("page_exit_attempt", { timestamp: new Date().toISOString() });
+      e.preventDefault();
+      e.returnValue = "Are you sure you want to leave? Your submission will be lost.";
+      return e.returnValue;
+    };
+
+    const handleWheel = (e) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 50) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSwipeNavigationAttempt(e);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("hashchange", handleHashChange);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      isMonitoringUrlRef.current = false;
+      window.open = originalWindowOpen;
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("hashchange", handleHashChange);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("wheel", handleWheel);
+      window.onbeforeunload = null;
+    };
+  }, [shouldRequestFullscreen, isAutoSubmitting]);
 
   useEffect(() => {
     if (!shouldRequestFullscreen()) return;
@@ -334,6 +668,25 @@ const SubmissionScreen = () => {
     const handleContextMenu = (e) => {
       e.preventDefault();
       logSecurityEvent("right_click_attempt", { x: e.pageX, y: e.pageY });
+    };
+
+    const handleTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        touchStartXRef.current = e.touches[0].clientX;
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      if (e.touches.length === 2 && touchStartXRef.current !== null) {
+        e.preventDefault();
+        const touchEndX = e.touches[0].clientX;
+        const deltaX = Math.abs(touchEndX - touchStartXRef.current);
+        if (deltaX > 50) {
+          handleSwipeNavigationAttempt(e);
+          touchStartXRef.current = null;
+        }
+      }
     };
 
     const handleKeyDown = (e) => {
@@ -363,7 +716,7 @@ const SubmissionScreen = () => {
         { key: "n", modifier: "ctrlKey", description: "Ctrl+N (New Window)" },
         { key: "t", modifier: "ctrlKey", description: "Ctrl+T (New Tab)" },
         { key: "w", modifier: "ctrlKey", description: "Ctrl+W (Close Tab)" },
-        { key: "F11", modifier: null, description: "F11 (Toggle Fullscreen)" },
+        { key: "F11", modifier: null, description: "F11 (Toggle Full Screen)" },
         { key: "u", modifier: "ctrlKey", description: "Ctrl+U" },
         { key: "o", modifier: "ctrlKey", description: "Ctrl+O" },
         { key: "p", modifier: "ctrlKey", description: "Ctrl+P" },
@@ -377,8 +730,7 @@ const SubmissionScreen = () => {
       const matchedRestriction = restrictedKeys.find(
         (restriction) =>
           e.key.toLowerCase() === restriction.key.toLowerCase() &&
-          (restriction.modifier === null || e[restriction.modifier]) &&
-          (restriction.modifierCombo === undefined || e[restriction.modifierCombo])
+          (restriction.modifier === null || e[restriction.modifier])
       );
 
       if (matchedRestriction) {
@@ -413,6 +765,7 @@ const SubmissionScreen = () => {
             if (newTime <= 0) {
               clearInterval(timer);
               if (!document.fullscreenElement && shouldRequestFullscreen()) {
+                setIsAutoSubmitting(true);
                 handleAutomaticSubmission();
               }
               return 0;
@@ -442,157 +795,217 @@ const SubmissionScreen = () => {
       }
     };
 
-    const handlePopState = (e) => {
-      if (shouldRequestFullscreen()) {
-        e.preventDefault();
-        logSecurityEvent("history_navigation_attempt", { timestamp: new Date().toISOString() });
-        window.history.pushState(null, document.title, window.location.href);
-        return false;
-      }
-    };
-
-    window.history.pushState(null, document.title, window.location.href);
-
     document.addEventListener("contextmenu", handleContextMenu);
+    document.addEventListener("touchstart", handleTouchStart, { passive: false });
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("fullscreenchange", handleFullScreenChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("popstate", handlePopState);
-
-    window.onbeforeunload = (e) => {
-      if (shouldRequestFullscreen()) {
-        logSecurityEvent("page_exit_attempt", { timestamp: new Date().toISOString() });
-        e.preventDefault();
-        e.returnValue = "Are you sure you want to leave? Your submission will be lost.";
-        return e.returnValue;
-      }
-    };
 
     return () => {
       document.removeEventListener("contextmenu", handleContextMenu);
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("fullscreenchange", handleFullScreenChange);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("popstate", handlePopState);
-      window.onbeforeunload = null;
-
       if (fullScreenExitTimer) {
         clearInterval(fullScreenExitTimer);
       }
     };
-  }, [userHasSubmitted, isTeacher, isFullScreen, fullScreenExitTimer, navigate]);
+  }, [userHasSubmitted, isTeacher, isFullScreen, fullScreenExitTimer, isAutoSubmitting]);
 
-  const handleAnswerChange = (question, answer) => {
-    if (!userHasSubmitted) {
-      setAnswers((prevAnswers) => ({
-        ...prevAnswers,
-        [question]: answer,
-      }));
-    }
+  // Custom indentation logic for Enter key
+  const customIndentation = (question) => {
+    return {
+      key: "Enter",
+      run: ({ state, dispatch }) => {
+        if (userHasSubmitted || isAutoSubmitting) return false;
+        const cursorPos = state.selection.main.head;
+        const text = state.doc.toString();
+        const lines = text.slice(0, cursorPos).split("\n");
+        const currentLine = lines[lines.length - 1];
+
+        const language = selectedLanguages[question] || "python";
+        const indentSize = SUPPORTED_LANGUAGES[language].indentSize;
+        const leadingSpaces = currentLine.match(/^\s*/)[0].length;
+        let indentLevel = Math.floor(leadingSpaces / indentSize);
+        if (currentLine.trim().endsWith(":")) {
+          indentLevel += 1;
+        }
+        const indent = " ".repeat(indentLevel * indentSize);
+
+        dispatch({
+          changes: { from: cursorPos, insert: `\n${indent}` },
+          selection: { anchor: cursorPos + indent.length + 1 },
+        });
+        return true;
+      },
+    };
   };
 
-  const handleKeyPress = async (question, e) => {
-    if (userHasSubmitted || e.key !== "Enter") return;
+  // Custom Tab key handler
+  const customTab = (question) => {
+    return {
+      key: "Tab",
+      run: ({ state, dispatch }) => {
+        if (userHasSubmitted || isAutoSubmitting) return false;
+        const cursorPos = state.selection.main.head;
+        const language = selectedLanguages[question] || "python";
+        const indentSize = SUPPORTED_LANGUAGES[language].indentSize;
+        const indent = " ".repeat(indentSize);
 
-    e.preventDefault();
-    const textarea = textFieldRefs.current[question];
-    if (!textarea) return;
+        dispatch({
+          changes: { from: cursorPos, insert: indent },
+          selection: { anchor: cursorPos + indentSize },
+        });
+        return true;
+      },
+    };
+  };
 
-    const cursorPos = textarea.selectionStart;
-    const textBeforeCursor = answers[question].slice(0, cursorPos);
-    const textAfterCursor = answers[question].slice(cursorPos);
-    const lines = textBeforeCursor.split("\n");
-    const currentLine = lines[lines.length - 1];
+  // Custom paste handler to prevent pasting in the editor
+  const customPaste = (question) => {
+    return {
+      key: "Ctrl-v",
+      mac: "Cmd-v",
+      run: () => {
+        if (!userHasSubmitted && !isTeacher && !isAutoSubmitting) {
+          logSecurityEvent("editor_paste_attempt", {
+            question: question,
+            timestamp: new Date().toISOString(),
+          });
+          return true;
+        }
+        return false;
+      },
+    };
+  };
 
-    const language = selectedLanguages[question] || "python";
+  // Initialize CodeMirror editors for each question
+  useEffect(() => {
+    const initializeEditors = () => {
+      questions.forEach((question) => {
+        const editorElement = document.getElementById(`editor-${question}`);
+        if (!editorRefs.current[question] && editorElement) {
+          const language = selectedLanguages[question] || "python";
+          const code = answers[question] || SUPPORTED_LANGUAGES[language].template;
 
-    try {
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/indent_line`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prev_line: currentLine,
-          language: language,
-        }),
+          const state = EditorState.create({
+            doc: code,
+            extensions: [
+              filteredBasicSetup,
+              LANGUAGE_EXTENSIONS[language],
+              bracketMatching(),
+              customTheme,
+              disableSpellCheck,
+              EditorView.lineWrapping,
+              noAutocompletion,
+              keymap.of([
+                customIndentation(question),
+                customTab(question),
+                customPaste(question),
+              ]),
+              EditorView.domEventHandlers({
+                paste: (event, view) => {
+                  if (!userHasSubmitted && !isTeacher && !isAutoSubmitting) {
+                    event.preventDefault();
+                    logSecurityEvent("editor_paste_attempt", {
+                      question: question,
+                      timestamp: new Date().toISOString(),
+                    });
+                    return true;
+                  }
+                  return false;
+                },
+              }),
+              EditorView.updateListener.of((update) => {
+                if (update.docChanged && !userHasSubmitted && !isAutoSubmitting) {
+                  const newCode = update.state.doc.toString();
+                  setAnswers((prev) => ({ ...prev, [question]: newCode }));
+                }
+              }),
+              EditorState.readOnly.of(userHasSubmitted || isAutoSubmitting),
+            ],
+          });
+
+          const view = new EditorView({
+            state,
+            parent: editorElement,
+          });
+
+          editorRefs.current[question] = view;
+        }
       });
+    };
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
+    initializeEditors();
 
-      const data = await response.json();
-      if (data.success) {
-        const indent = data.indentation;
-        const newText = `${textBeforeCursor}\n${indent}${textAfterCursor}`;
+    return () => {
+      Object.values(editorRefs.current).forEach((view) => view.destroy());
+      editorRefs.current = {};
+    };
+  }, [questions, selectedLanguages, userHasSubmitted, isAutoSubmitting]);
 
-        setAnswers((prevAnswers) => ({
-          ...prevAnswers,
-          [question]: newText,
-        }));
-
-        setTimeout(() => {
-          textarea.selectionStart = cursorPos + indent.length + 1;
-          textarea.selectionEnd = cursorPos + indent.length + 1;
-        }, 0);
-      } else {
-        console.error("Indentation error:", data.error);
-      }
-    } catch (e) {
-      console.error("Error fetching indentation:", e);
-      // Fallback to local indentation
-      const indentSize = SUPPORTED_LANGUAGES[language].indentSize;
-      const leadingSpaces = currentLine.match(/^\s*/)[0].length;
-      let indentLevel = Math.floor(leadingSpaces / indentSize);
-      if (currentLine.trim().endsWith(":")) {
-        indentLevel += 1;
-      }
-      const indent = " ".repeat(indentLevel * indentSize);
-      const newText = `${textBeforeCursor}\n${indent}${textAfterCursor}`;
-
-      setAnswers((prevAnswers) => ({
-        ...prevAnswers,
-        [question]: newText,
-      }));
-
-      setTimeout(() => {
-        textarea.selectionStart = cursorPos + indent.length + 1;
-        textarea.selectionEnd = cursorPos + indent.length + 1;
-      }, 0);
-    }
-  };
-
-  const handleLanguageChange = async (question, language) => {
-    if (!userHasSubmitted) {
-      setSelectedLanguages((prev) => ({
-        ...prev,
-        [question]: language,
-      }));
+  // Update editor language when selected language changes
+  const handleLanguageChange = (question, language) => {
+    if (!userHasSubmitted && !isAutoSubmitting) {
+      setSelectedLanguages((prev) => ({ ...prev, [question]: language }));
 
       const currentAnswer = answers[question] || "";
       const isEmptyOrTemplate =
         currentAnswer.trim() === "" ||
         Object.values(SUPPORTED_LANGUAGES).some((lang) => currentAnswer.trim() === lang.template.trim());
 
-      if (isEmptyOrTemplate) {
-        const template = SUPPORTED_LANGUAGES[language].template;
-        setAnswers((prev) => ({
-          ...prev,
-          [question]: template,
-        }));
-      } else {
-        const formattedCode = await formatCode(question, currentAnswer, language);
-        setAnswers((prev) => ({
-          ...prev,
-          [question]: formattedCode,
-        }));
+      const newCode = isEmptyOrTemplate ? SUPPORTED_LANGUAGES[language].template : currentAnswer;
+
+      setAnswers((prev) => ({ ...prev, [question]: newCode }));
+
+      if (editorRefs.current[question]) {
+        const view = editorRefs.current[question];
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: newCode },
+          effects: StateEffect.reconfigure.of([
+            filteredBasicSetup,
+            LANGUAGE_EXTENSIONS[language],
+            bracketMatching(),
+            customTheme,
+            disableSpellCheck,
+            EditorView.lineWrapping,
+            noAutocompletion,
+            keymap.of([
+              customIndentation(question),
+              customTab(question),
+              customPaste(question),
+            ]),
+            EditorView.domEventHandlers({
+              paste: (event, view) => {
+                if (!userHasSubmitted && !isTeacher && !isAutoSubmitting) {
+                  event.preventDefault();
+                  logSecurityEvent("editor_paste_attempt", {
+                    question: question,
+                    timestamp: new Date().toISOString(),
+                  });
+                  return true;
+                }
+                return false;
+              },
+            }),
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged && !userHasSubmitted && !isAutoSubmitting) {
+                const newCode = update.state.doc.toString();
+                setAnswers((prev) => ({ ...prev, [question]: newCode }));
+              }
+            }),
+            EditorState.readOnly.of(userHasSubmitted || isAutoSubmitting),
+          ]),
+        });
       }
     }
   };
 
   const handleInputChange = (question, value) => {
-    if (!userHasSubmitted) {
+    if (!userHasSubmitted && !isAutoSubmitting) {
       setInputValues((prev) => ({
         ...prev,
         [question]: value,
@@ -654,48 +1067,14 @@ const SubmissionScreen = () => {
   };
 
   const handlePaste = (e) => {
-    if (!isTeacher && !userHasSubmitted) {
+    if (!isTeacher && !userHasSubmitted && !isAutoSubmitting) {
       e.preventDefault();
       logSecurityEvent("paste_attempt", { element: e.target.name || "unknown" });
     }
   };
 
-  const formatCode = async (question, code, overrideLanguage) => {
-    if (!code.trim() || userHasSubmitted) return code;
-
-    const language = overrideLanguage || selectedLanguages[question] || "python";
-
-    try {
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/indentation_test`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          code: code,
-          language: language,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        return data.formatted_code;
-      } else {
-        console.error("Formatting error:", data.error);
-        return code;
-      }
-    } catch (e) {
-      console.error("Error formatting code:", e);
-      return code;
-    }
-  };
-
   const compileCode = async (question, code) => {
-    if (!code.trim() || userHasSubmitted) return;
+    if (!code.trim() || userHasSubmitted || isAutoSubmitting) return;
 
     const language = selectedLanguages[question] || "python";
 
@@ -705,20 +1084,13 @@ const SubmissionScreen = () => {
     }));
 
     try {
-      const formattedCode = await formatCode(question, code);
-
-      setAnswers((prev) => ({
-        ...prev,
-        [question]: formattedCode,
-      }));
-
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/compile`, {
+      const response = await fetch("http://localhost:5002/compile", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          code: formattedCode,
+          code: code,
           language: language,
           stdin: inputValues[question] || "",
         }),
@@ -753,72 +1125,66 @@ const SubmissionScreen = () => {
     }
   };
 
-  const evaluateAllAnswers = async (answers) => {
-    setEvaluationLoading(true);
-    const evaluations = {};
-    const marks = {};
+const evaluateAllAnswers = async (answers) => {
+  setEvaluationLoading(true);
+  const evaluations = {};
+  const marks = {};
 
-    try {
-      for (const [question, code] of Object.entries(answers)) {
-        const language = selectedLanguages[question] || "python";
+  try {
+    for (const [question, code] of Object.entries(answers)) {
+      const language = selectedLanguages[question] || "python";
 
-        try {
-          const response = await fetch(`${process.env.REACT_APP_EVAL_API_URL}/evaluate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              question: question,
-              code: code,
-              language: language,
-            }),
-          });
+      try {
+        const response = await fetch("http://localhost:5001/evaluate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question: question,
+            code: code,
+            language: language,
+          }),
+        });
 
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
-          }
-
-          const data = await response.json();
-          console.log(`Evaluation result for ${question}:`, data);
-
-          evaluations[question] = data;
-          if (data.grade) {
-            marks[question] = data.grade;
-          }
-        } catch (e) {
-          console.error(`Error evaluating code for ${question}:`, e);
-          evaluations[question] = {
-            success: false,
-            error: e.message,
-            review: e.message.includes("HTTP error")
-              ? "Evaluation service unavailable. Please try again later."
-              : `Failed to evaluate code: ${e.message}`,
-          };
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
         }
-      }
 
-      setEvaluationResults(evaluations);
-      setMarks(marks);
-      return { evaluations, marks };
-    } catch (e) {
-      console.error("Error during evaluation:", e);
-      throw e;
-    } finally {
-      setEvaluationLoading(false);
+        const data = await response.json();
+        console.log(`Evaluation result for ${question}:`, data);
+
+        evaluations[question] = data;
+        if (data.grade) {
+          marks[question] = data.grade;
+        }
+      } catch (e) {
+        console.error(`Error evaluating code for ${question}:`, e);
+        evaluations[question] = {
+          success: false,
+          error: e.message,
+          review: e.message.includes("HTTP error")
+            ? "Evaluation service unavailable. Please try again later."
+            : `Failed to evaluate code: ${e.message}`,
+        };
+      }
     }
-  };
+
+    setEvaluationResults(evaluations);
+    setMarks(marks);
+    return { evaluations, marks };
+  } catch (e) {
+    console.error("Error during evaluation:", e);
+    throw e;
+  } finally {
+    setEvaluationLoading(false);
+  }
+};
 
   const submitAnswers = async () => {
     try {
-      const formattedAnswers = {};
-      for (const [question, code] of Object.entries(answers)) {
-        formattedAnswers[question] = await formatCode(question, code);
-      }
-      setAnswers(formattedAnswers);
-
-      const { evaluations, marks } = await evaluateAllAnswers(formattedAnswers);
+      const { evaluations, marks } = await evaluateAllAnswers(answers);
 
       const workspaceRef = doc(db, "workspaces", workspaceId);
       const workspaceDoc = await getDoc(workspaceRef);
@@ -831,10 +1197,17 @@ const SubmissionScreen = () => {
             const newSubmission = {
               submittedBy: username,
               submittedAt: Date.now(),
-              answers: formattedAnswers,
+              answers: answers,
               languages: selectedLanguages,
               marks: marks,
               evaluations: evaluations,
+              violations: {
+                escKeyPressCount: escKeyPressCountRef.current,
+                violationCount: violationCountRef.current,
+                swipeViolationCount: swipeViolationCountRef.current,
+                fullScreenExitCount: fullScreenExitCountRef.current,
+                lastViolationTime: lastViolationTimeRef.current,
+              },
             };
 
             const updatedSubmissions = submissions.filter((s) => s.submittedBy !== username);
@@ -853,18 +1226,29 @@ const SubmissionScreen = () => {
         exitFullScreen();
         logSecurityEvent("submission_successful", { timestamp: new Date().toISOString() });
         alert("Submission Successful! Your answers have been automatically evaluated.");
-        navigate(`/workspace/${workspaceId}`);
+
+        // Clear assignment-specific violation counts from localStorage
+        localStorage.removeItem(`${storagePrefix}_escKeyPressCount`);
+        localStorage.removeItem(`${storagePrefix}_violationCount`);
+        localStorage.removeItem(`${storagePrefix}_swipeViolationCount`);
+        localStorage.removeItem(`${storagePrefix}_fullScreenExitCount`);
+        localStorage.removeItem(`${storagePrefix}_lastViolationTime`);
+
+        window.onbeforeunload = null;
+        window.location.replace(`/workspace/${workspaceId}`);
       } else {
         setError("Workspace not found.");
       }
     } catch (e) {
+      console.error("Error submitting answers:", e);
       setError(`Error submitting answers: ${e.message}`);
     } finally {
-      localStorage.removeItem("escKeyPressCount");
-      localStorage.removeItem("violationCount");
+      sessionStorage.clear();
       escKeyPressCountRef.current = 0;
       violationCountRef.current = 0;
+      swipeViolationCountRef.current = 0;
       fullScreenExitCountRef.current = 0;
+      lastViolationTimeRef.current = 0;
     }
   };
 
@@ -992,7 +1376,7 @@ const SubmissionScreen = () => {
         />
       </Box>
 
-      {showPermissionsDialog && !userHasSubmitted && (
+      {showPermissionsDialog && !userHasSubmitted && !isAutoSubmitting && (
         <Dialog
           open={showPermissionsDialog}
           disableEscapeKeyDown
@@ -1118,8 +1502,13 @@ const SubmissionScreen = () => {
                   background: "#7B1FA2",
                   boxShadow: "0 0 20px rgba(156, 39, 176, 0.5)",
                 },
+                "&:disabled": {
+                  background: "rgba(156, 39, 176, 0.3)",
+                  color: "rgba(255, 255, 255, 0.5)",
+                },
               }}
               onClick={requestPermissions}
+              disabled={isAutoSubmitting}
             >
               Re-enter Full-Screen
             </Button>
@@ -1261,7 +1650,7 @@ const SubmissionScreen = () => {
                     letterSpacing: "1px",
                   }}
                 >
-                  Important: This exam is in secure mode. You must remain in full screen until submission. Attempting to exit, switch tabs, or use keyboard shortcuts will be logged. Any security violation will give you 15 seconds to return before automatic submission. Multiple violations will result in immediate submission.
+                  Important: This exam is in secure mode. You must remain in full screen until submission. Attempting to exit, switch tabs, use keyboard shortcuts, perform touchpad left/right swipes, or change the URL will result in immediate submission.
                 </Typography>
               </Box>
             )}
@@ -1324,7 +1713,7 @@ const SubmissionScreen = () => {
                         value={selectedLanguages[question] || "python"}
                         label="Programming Language"
                         onChange={(e) => handleLanguageChange(question, e.target.value)}
-                        disabled={userHasSubmitted}
+                        disabled={userHasSubmitted || isAutoSubmitting}
                         sx={{
                           color: "#e0e0e0",
                           "& .MuiOutlinedInput-notchedOutline": {
@@ -1377,7 +1766,7 @@ const SubmissionScreen = () => {
                         />
                         <Tab
                           label="Input"
-                          disabled={userHasSubmitted}
+                          disabled={userHasSubmitted || isAutoSubmitting}
                           sx={{
                             color: activeTab[question] === 1 ? "#e0e0e0" : "rgba(224, 224, 224, 0.7)",
                             "&.Mui-selected": {
@@ -1389,40 +1778,17 @@ const SubmissionScreen = () => {
                     </Box>
 
                     {activeTab[question] === 0 ? (
-                      <TextField
-                        fullWidth
-                        multiline
-                        rows={10}
-                        value={answers[question] || ""}
-                        onChange={(e) => handleAnswerChange(question, e.target.value)}
-                        onKeyDown={(e) => handleKeyPress(question, e)}
-                        onPaste={handlePaste}
-                        placeholder={`Write your ${
-                          SUPPORTED_LANGUAGES[selectedLanguages[question] || "python"].display
-                        } code here`}
+                      <Box
+                        id={`editor-${question}`}
                         sx={{
+                          width: "100%",
+                          height: "300px",
                           mb: 3,
-                          fontFamily: "monospace",
-                          "& .MuiOutlinedInput-root": {
-                            color: "#e0e0e0",
-                            "& fieldset": {
-                              borderColor: "rgba(156, 39, 176, 0.5)",
-                            },
-                            "&:hover fieldset": {
-                              borderColor: "rgba(156, 39, 176, 0.8)",
-                            },
-                            "&.Mui-focused fieldset": {
-                              borderColor: "rgba(156, 39, 176, 0.8)",
-                            },
+                          border: "1px solid rgba(156, 39, 176, 0.5)",
+                          borderRadius: "4px",
+                          "&:hover": {
+                            borderColor: "rgba(156, 39, 176, 0.8)",
                           },
-                        }}
-                        inputRef={(el) => (textFieldRefs.current[question] = el)}
-                        InputProps={{
-                          style: {
-                            fontFamily: "monospace",
-                            color: "#e0e0e0",
-                          },
-                          readOnly: userHasSubmitted,
                         }}
                       />
                     ) : (
@@ -1432,13 +1798,14 @@ const SubmissionScreen = () => {
                         rows={4}
                         value={inputValues[question] || ""}
                         onChange={(e) => handleInputChange(question, e.target.value)}
+                        onPaste={handlePaste}
                         placeholder="Enter input for your code here (one input per line)"
                         sx={{
                           mb: 3,
                           "& .MuiOutlinedInput-root": {
                             color: "#e0e0e0",
                             "& fieldset": {
-                              borderColor: "rgba(156, 39, 176, 0.5)",
+                              border: "1px solid rgba(156, 39, 176, 0.5)",
                             },
                             "&:hover fieldset": {
                               borderColor: "rgba(156, 39, 176, 0.8)",
@@ -1453,16 +1820,16 @@ const SubmissionScreen = () => {
                             fontFamily: "monospace",
                             color: "#e0e0e0",
                           },
-                          readOnly: userHasSubmitted,
+                          readOnly: userHasSubmitted || isAutoSubmitting,
                         }}
                       />
                     )}
 
-                    {!userHasSubmitted && (
+                    {!userHasSubmitted && !isAutoSubmitting && (
                       <Box sx={{ display: "flex", gap: 2 }}>
                         <Button
                           variant="contained"
-                          disabled={userHasSubmitted || !answers[question]}
+                          disabled={userHasSubmitted || !answers[question] || isAutoSubmitting}
                           onClick={() => compileCode(question, answers[question])}
                           sx={{
                             mb: 3,
@@ -1657,55 +2024,59 @@ const SubmissionScreen = () => {
               ))}
             </List>
 
-            {!userHasSubmitted && (
+            {!userHasSubmitted && !isAutoSubmitting && (
               <Box sx={{ display: "flex", justifyContent: "center", mb: 4 }}>
                 <Button
                   variant="contained"
                   onClick={submitAnswers}
-                  disabled={evaluationLoading}
+                  disabled={evaluationLoading || isAutoSubmitting}
                   sx={{
-                    mt: 2,
                     background: "linear-gradient(135deg, #9c27b0 0%, #7B1FA2 100%)",
+                    color: "white",
                     "&:hover": {
                       background: "#7B1FA2",
                       boxShadow: "0 0 20px rgba(156, 39, 176, 0.5)",
                     },
-                    height: "44px",
-                    borderRadius: "22px",
+                    "&:disabled": {
+                      background: "rgba(156, 39, 176, 0.3)",
+                      color: "rgba(255, 255, 255, 0.5)",
+                    },
+                    height: "48px",
+                    borderRadius: "24px",
                     textTransform: "none",
                     fontWeight: "bold",
-                    fontSize: "1rem",
-                    letterSpacing: "0.5px",
+                    fontSize: "1.1rem",
+                    letterSpacing: "1px",
+                    px: 4,
                     boxShadow: "0 5px 15px rgba(0, 0, 0, 0.3), 0 0 5px rgba(156, 39, 176, 0.5) inset",
-                    transition: "all 0.3s ease-in-out",
                   }}
                 >
                   {evaluationLoading ? (
-                    <>
-                      <CircularProgress size={24} sx={{ color: "white", mr: 2 }} />
-                      Submitting and Evaluating...
-                    </>
+                    <CircularProgress size={24} sx={{ color: "white" }} />
                   ) : (
-                    "Submit Answers"
+                    "Submit Assignment"
                   )}
                 </Button>
               </Box>
             )}
-          </Box>
-        )}
 
-        {error && (
-          <Alert
-            severity="error"
-            sx={{
-              mt: 2,
-              background: "rgba(50, 10, 10, 0.9)",
-              border: "1px solid rgba(255, 70, 70, 0.3)",
-              backdropFilter: "blur(10px)",
-            }}
-          >
-            {error}
-          </Alert>
+            {error && (
+              <Alert
+                severity="error"
+                sx={{
+                  mb: 4,
+                  background: "rgba(244, 67, 54, 0.1)",
+                  border: "1px solid rgba(244, 67, 54, 0.5)",
+                  color: "#F44336",
+                  "& .MuiAlert-icon": {
+                    color: "#F44336",
+                  },
+                }}
+              >
+                {error}
+              </Alert>
+            )}
+          </Box>
         )}
       </Container>
     </Box>
