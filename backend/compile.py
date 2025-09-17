@@ -17,11 +17,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# More explicit CORS configuration
+# CORS configuration for Railway deployment
 CORS(app, resources={r"/*": {
-    "origins": "http://localhost:3000",
-    "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"],
+    "origins": [
+        "https://code-arena-*.vercel.app",
+        "https://*.vercel.app", 
+        "https://codearena.vercel.app",
+        "https://*.railway.app",
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ],
+    "expose_headers": ["Content-Type", "Content-Length"],
+    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     "supports_credentials": True
 }})
 
@@ -268,14 +276,7 @@ def run_command(command, cwd=None, timeout=10, stdin_data=None):
             "returncode": 1
         }
 
-@app.route('/compile', methods=['OPTIONS'])
-def options_compile():
-    response = jsonify({"status": "ok"})
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
+# OPTIONS requests are handled automatically by flask-cors
 
 @app.route('/compile', methods=['POST'])
 def compile_code():
@@ -393,7 +394,9 @@ def compile_code():
         return jsonify(result)
 
     except Exception as e:
-        logger.error(f"Error during compilation/execution: {str(e)}")
+        logger.error(f"API Error: {str(e)}")
+        logger.error(f"Request Data: {data}")
+        logger.error(f"Temp Directory: {temp_dir}")
         logger.error(traceback.format_exc())
         return jsonify({
             "success": False,
@@ -560,5 +563,10 @@ return 0;
     
     return jsonify(results)
 
+# Export app for Railway deployment
+# Railway will automatically detect and run this Flask app
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    import os
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False)
