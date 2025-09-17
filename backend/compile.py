@@ -17,20 +17,22 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CORS configuration for Railway deployment
+# CORS configuration for Render deployment
 CORS(app, resources={r"/*": {
     "origins": [
+        "https://code-arena-akred8e70-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-*.vercel.app",
         "https://*.vercel.app", 
         "https://codearena.vercel.app",
         "https://*.railway.app",
+        "https://*.onrender.com",
         "http://localhost:3000",
         "http://localhost:3001"
     ],
     "expose_headers": ["Content-Type", "Content-Length"],
     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    "supports_credentials": True
+    "supports_credentials": False
 }})
 
 # Try to import optional formatting libraries
