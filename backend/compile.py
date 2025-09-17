@@ -20,6 +20,7 @@ app = Flask(__name__)
 # CORS configuration for Render deployment
 CORS(app, resources={r"/*": {
     "origins": [
+        "https://code-arena-ealxpf5tu-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-e1hez48mw-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-8zk339hrw-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-a27l9jmcz-utkarshs-projects-a5d46763.vercel.app",
