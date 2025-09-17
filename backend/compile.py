@@ -26,6 +26,7 @@ CORS(app, resources={r"/*": {
         "https://code-arena-8zk339hrw-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-a27l9jmcz-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-akred8e70-utkarshs-projects-a5d46763.vercel.app",
+        "https://code-arena-pckugld8a-utkarshs-projects-a5d46763.vercel.app",
         "https://code-arena-*.vercel.app",
         "https://*.vercel.app", 
         "https://codearena.vercel.app",
