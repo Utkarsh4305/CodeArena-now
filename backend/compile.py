@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import subprocess
 import tempfile
@@ -283,6 +283,16 @@ def run_command(command, cwd=None, timeout=10, stdin_data=None):
             "returncode": 1
         }
 
+# Handle OPTIONS requests explicitly for better CORS support
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        return response
+
 # OPTIONS requests are handled automatically by flask-cors
 
 @app.route('/compile', methods=['POST'])
@@ -480,6 +490,180 @@ def formatters_status():
         "formatters_available": formatters_available,
         "status": "ok"
     })
+
+@app.route('/evaluate', methods=['POST'])
+def evaluate_code():
+    """AI evaluation endpoint for code submissions."""
+    data = request.json
+    code = data.get('code', '')
+    language = data.get('language', 'python')
+    question = data.get('question', '')
+    expected_output = data.get('expected_output', '')
+    
+    logger.info(f"Received evaluation request for language: {language}")
+    
+    try:
+        # For now, provide a simple rule-based evaluation
+        # In production, you would integrate with an AI service like OpenAI
+        
+        # First, try to compile/run the code
+        compile_result = compile_code_internal(code, language)
+        
+        if not compile_result.get('success', False):
+            return jsonify({
+                'success': False,
+                'grade': 0,
+                'review': f"Code failed to execute: {compile_result.get('error', 'Unknown error')}",
+                'error': 'Compilation/execution failed'
+            })
+        
+        output = compile_result.get('execution', {}).get('stdout', '').strip()
+        
+        # Simple evaluation logic
+        grade = 0
+        review = ""
+        
+        if expected_output:
+            if output == expected_output.strip():
+                grade = 10
+                review = "Perfect! Your code produces the exact expected output."
+            elif output and len(output) > 0:
+                grade = 5
+                review = f"Your code runs but output doesn't match exactly. Expected: '{expected_output}', Got: '{output}'"
+            else:
+                grade = 2
+                review = "Your code runs but produces no output."
+        else:
+            # Generic evaluation without expected output
+            if output and len(output) > 0:
+                grade = 7
+                review = "Good! Your code executes successfully and produces output."
+            else:
+                grade = 3
+                review = "Your code executes but produces no output."
+        
+        # Additional checks
+        if 'syntax' in compile_result.get('execution', {}).get('stderr', '').lower():
+            grade = max(0, grade - 3)
+            review += " Note: There were syntax-related warnings."
+        
+        return jsonify({
+            'success': True,
+            'grade': grade,
+            'review': review,
+            'output': output,
+            'execution_result': compile_result
+        })
+        
+    except Exception as e:
+        logger.error(f"Evaluation error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'grade': 0,
+            'review': 'Failed to evaluate code due to server error.',
+            'error': str(e)
+        })
+
+def compile_code_internal(code, language, stdin=''):
+    """Internal helper function for code compilation."""
+    if language not in LANGUAGE_CONFIG:
+        return {
+            "success": False,
+            "error": f"Unsupported language: {language}"
+        }
+
+    session_id = str(uuid.uuid4())
+    temp_dir = tempfile.mkdtemp(prefix=f"compiler_{session_id}_")
+    
+    try:
+        lang_config = LANGUAGE_CONFIG[language]
+        file_extension = lang_config["file_extension"]
+        
+        formatted_code = format_code(code, language)
+        
+        if language == "java" and lang_config.get("requires_specific_name", False):
+            file_name = lang_config.get("file_name", f"program{file_extension}")
+            formatted_code = ensure_java_class_name_matches(formatted_code, file_name)
+        else:
+            file_name = f"program{file_extension}"
+            
+        file_path = os.path.join(temp_dir, file_name)
+
+        with open(file_path, 'w') as f:
+            f.write(formatted_code)
+
+        result = {
+            "original_code": code,
+            "formatted_code": formatted_code
+        }
+
+        if "compile_command" in lang_config:
+            executable = "program"
+            if platform.system() == "Windows":
+                executable += ".exe"
+
+            executable_path = os.path.join(temp_dir, executable)
+            class_name = extract_class_name(formatted_code) if language == "java" else None
+
+            compile_cmd = []
+            for arg in lang_config["compile_command"]:
+                formatted_arg = arg.format(
+                    file=file_path,
+                    executable=executable,
+                    executable_path=executable_path,
+                    dir=temp_dir,
+                    class_name=class_name
+                )
+                compile_cmd.append(formatted_arg)
+
+            compile_result = run_command(compile_cmd, cwd=temp_dir)
+            result["compilation"] = compile_result
+
+            if compile_result["returncode"] != 0:
+                result["success"] = False
+                result["phase"] = "compilation"
+                result["error"] = compile_result["stderr"]
+                return result
+
+            run_cmd = []
+            for arg in lang_config["run_command"]:
+                formatted_arg = arg.format(
+                    file=file_path,
+                    executable=executable,
+                    executable_path=executable_path,
+                    dir=temp_dir,
+                    class_name=class_name
+                )
+                run_cmd.append(formatted_arg)
+
+            run_result = run_command(run_cmd, cwd=temp_dir, stdin_data=stdin)
+            result["execution"] = run_result
+            result["success"] = run_result["returncode"] == 0
+            result["phase"] = "execution"
+
+        else:
+            run_cmd = []
+            for arg in lang_config["command"]:
+                formatted_arg = arg.format(file=file_path)
+                run_cmd.append(formatted_arg)
+
+            run_result = run_command(run_cmd, cwd=temp_dir, stdin_data=stdin)
+            result["execution"] = run_result
+            result["success"] = run_result["returncode"] == 0
+            result["phase"] = "execution"
+
+        return result
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    finally:
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 @app.route('/test', methods=['GET'])
 def test_languages():
